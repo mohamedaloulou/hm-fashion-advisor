@@ -130,7 +130,6 @@ def fetch_weather(city: str, api_key: str) -> dict | None:
         )
         resp.raise_for_status()
         data = resp.json()
-        st.write(data)  # temporary debug — remove after checking
         return {
             "city":        data["name"],
             "temp_c":      round(data["main"]["temp"], 1),
@@ -333,12 +332,12 @@ if generate:
             st.error("Could not fetch weather. Check your API key and city name.")
             st.stop()
         st.markdown(
-            f"""<div class="card">
-            <h4>🌤️ {weather['city']}</h4>
+            f"""<div style="background:white;border-radius:12px;padding:20px 24px;margin-bottom:16px;box-shadow:0 2px 12px rgba(0,0,0,0.07);border-left:4px solid #c8a96e;">
+            <h4 style="margin:0 0 8px 0;">🌤️ {weather['city']}</h4>
             <p style="font-size:2rem;margin:4px 0"><b>{weather['temp_c']}°C</b></p>
-            <p>{weather['description']}</p>
-            <p>💧 {weather['humidity']}% &nbsp;|&nbsp; 💨 {weather['wind_kph']} km/h</p>
-            <p>Feels like <b>{weather['feels_like']}°C</b></p>
+            <p style="margin:4px 0">{weather['description']}</p>
+            <p style="margin:4px 0">💧 {weather['humidity']}% &nbsp;|&nbsp; 💨 {weather['wind_kph']} km/h</p>
+            <p style="margin:4px 0">Feels like <b>{weather['feels_like']}°C</b></p>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -347,9 +346,9 @@ if generate:
     with col2:
         with st.spinner("Fetching Google Trends..."):
             trends = fetch_trends(seeds)
-        badges = "".join(f'<span class="trend-badge">{t}</span>' for t in trends)
+        badges = "".join(f'<span style="background:#0d0d0d;color:#c8a96e;border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:500;margin:3px;display:inline-block;">{t}</span>' for t in trends)
         st.markdown(
-            f'<div class="card"><h4>📈 Trending Now</h4>{badges}</div>',
+            f'<div style="background:white;border-radius:12px;padding:20px 24px;margin-bottom:16px;box-shadow:0 2px 12px rgba(0,0,0,0.07);border-left:4px solid #c8a96e;"><h4 style="margin:0 0 8px 0;">📈 Trending Now</h4>{badges}</div>',
             unsafe_allow_html=True,
         )
 
@@ -367,11 +366,11 @@ if generate:
                 st.stop()
 
         pills = "".join(
-            f'<span class="pill">{d.metadata.get("prod_name","?")} · {d.metadata.get("colour_group_name","?")}</span>'
+            f'<span style="display:inline-block;background:#f0ebe0;border:1px solid #c8a96e;border-radius:20px;padding:4px 14px;font-size:0.78rem;margin:3px;color:#5a4a35;">{d.metadata.get("prod_name","?")} · {d.metadata.get("colour_group_name","?")}</span>'
             for d in docs
         )
         st.markdown(
-            f'<div class="card"><h4>🗂️ Matched Inventory ({len(docs)})</h4>{pills}</div>',
+            f'<div style="background:white;border-radius:12px;padding:20px 24px;margin-bottom:16px;box-shadow:0 2px 12px rgba(0,0,0,0.07);border-left:4px solid #c8a96e;"><h4 style="margin:0 0 8px 0;">🗂️ Matched Inventory ({len(docs)})</h4>{pills}</div>',
             unsafe_allow_html=True,
         )
 
