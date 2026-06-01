@@ -37,7 +37,6 @@ st.set_page_config(
 )
 
 # ── Custom CSS ─────────────────────────────────────────────────────────────────
-# Inject Google Fonts via <link> (works on Streamlit Cloud CSP unlike @import)
 st.markdown("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -53,11 +52,6 @@ section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] .stTextInput label,
 section[data-testid="stSidebar"] p { color: #f5f0e8 !important; }
 .stApp { background: #f5f0e8; }
-.card {
-    background: white; border-radius: 12px; padding: 20px 24px;
-    margin-bottom: 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.07);
-    border-left: 4px solid #c8a96e;
-}
 .pill {
     display: inline-block; background: #f0ebe0; border: 1px solid #c8a96e;
     border-radius: 20px; padding: 4px 14px; font-size: 0.78rem;
@@ -91,6 +85,10 @@ def get_groq_client(api_key: str) -> Groq:
     if _groq_client is None:
         _groq_client = Groq(api_key=api_key)
     return _groq_client
+
+
+# ── Read secrets from Streamlit Cloud ─────────────────────────────────────────
+DEFAULT_PINECONE_KEY = st.secrets.get("PINECONE_API_KEY", "")
 
 
 # ── Cached resources ───────────────────────────────────────────────────────────
@@ -207,7 +205,6 @@ Be specific, creative, and concise. Use bullet points and clear section headers.
 # ── Langfuse-traced Groq calls ─────────────────────────────────────────────────
 @observe(as_type="generation")
 def _groq_generation(**kwargs):
-    """Inner function — traced as a single LLM generation in Langfuse."""
     messages     = kwargs.pop("messages")
     model        = kwargs.pop("model")
     max_tokens   = kwargs.pop("max_tokens", 1024)
@@ -241,7 +238,6 @@ def _groq_generation(**kwargs):
 
 @observe()
 def call_groq(prompt: str, api_key: str) -> str:
-    """Outer function — traced as a full fashion advisor trace in Langfuse."""
     for attempt in range(3):
         try:
             return _groq_generation(
@@ -263,9 +259,9 @@ with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     st.markdown("---")
 
-    groq_key      = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
-    weather_key   = st.text_input("OpenWeatherMap API Key", type="password", placeholder="abc123...")
-    pinecone_key  = st.text_input("Pinecone API Key", type="password", placeholder="pcsk_...")
+    groq_key     = st.text_input("Groq API Key",          type="password", placeholder="gsk_...")
+    weather_key  = st.text_input("OpenWeatherMap API Key", type="password", placeholder="abc123...")
+    pinecone_key = st.text_input("Pinecone API Key",       value=DEFAULT_PINECONE_KEY, type="password", placeholder="pcsk_...")
 
     st.markdown("---")
     st.markdown("### 📍 Location & Profile")
@@ -285,14 +281,12 @@ with st.sidebar:
     langfuse_host   = st.selectbox(
         "Langfuse Region",
         ["https://cloud.langfuse.com", "https://us.cloud.langfuse.com"],
-        help="EU: cloud.langfuse.com — US: us.cloud.langfuse.com. Check your browser URL when logged in."
     )
     st.caption("Optional — get free keys at cloud.langfuse.com")
 
     st.markdown("---")
     st.caption("Get a free Groq API key at console.groq.com")
     st.caption("Get a free Pinecone API key at pinecone.io")
-    st.caption("Run `python ingest.py` once locally to populate Pinecone.")
 
 
 # ── Main UI ────────────────────────────────────────────────────────────────────
@@ -308,13 +302,10 @@ if generate:
         st.stop()
 
     # ── Activate Langfuse if keys provided ────────────────────────────────
-    # Must set env vars before @observe decorators fire, so we set them
-    # as early as possible and use st.session_state to persist across reruns.
     if langfuse_public and langfuse_secret:
         os.environ["LANGFUSE_PUBLIC_KEY"] = langfuse_public
         os.environ["LANGFUSE_SECRET_KEY"] = langfuse_secret
         os.environ["LANGFUSE_HOST"]       = langfuse_host
-        # Cache a single flushing client in session state
         if "lf_client" not in st.session_state:
             st.session_state["lf_client"] = Langfuse(
                 public_key=langfuse_public,
@@ -331,26 +322,26 @@ if generate:
         if not weather:
             st.error("Could not fetch weather. Check your API key and city name.")
             st.stop()
-        st.markdown(
-            f"""<div style="background:white;border-radius:12px;padding:20px 24px;margin-bottom:16px;box-shadow:0 2px 12px rgba(0,0,0,0.07);border-left:4px solid #c8a96e;">
-            <h4 style="margin:0 0 8px 0;">🌤️ {weather['city']}</h4>
-            <p style="font-size:2rem;margin:4px 0"><b>{weather['temp_c']}°C</b></p>
-            <p style="margin:4px 0">{weather['description']}</p>
-            <p style="margin:4px 0">💧 {weather['humidity']}% &nbsp;|&nbsp; 💨 {weather['wind_kph']} km/h</p>
-            <p style="margin:4px 0">Feels like <b>{weather['feels_like']}°C</b></p>
-            </div>""",
-            unsafe_allow_html=True,
-        )
+
+        st.markdown(f"### 🌤️ {weather['city']}")
+        st.metric(label="Temperature", value=f"{weather['temp_c']}°C", delta=f"Feels like {weather['feels_like']}°C")
+        st.write(f"**{weather['description']}**")
+        col1a, col1b = st.columns(2)
+        with col1a:
+            st.metric("💧 Humidity", f"{weather['humidity']}%")
+        with col1b:
+            st.metric("💨 Wind", f"{weather['wind_kph']} km/h")
 
     # ── Step 2: Trends ─────────────────────────────────────────────────────
     with col2:
         with st.spinner("Fetching Google Trends..."):
             trends = fetch_trends(seeds)
-        badges = "".join(f'<span style="background:#0d0d0d;color:#c8a96e;border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:500;margin:3px;display:inline-block;">{t}</span>' for t in trends)
-        st.markdown(
-            f'<div style="background:white;border-radius:12px;padding:20px 24px;margin-bottom:16px;box-shadow:0 2px 12px rgba(0,0,0,0.07);border-left:4px solid #c8a96e;"><h4 style="margin:0 0 8px 0;">📈 Trending Now</h4>{badges}</div>',
-            unsafe_allow_html=True,
+        st.markdown("### 📈 Trending Now")
+        badges = "".join(
+            f'<span style="background:#0d0d0d;color:#c8a96e;border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:500;margin:3px;display:inline-block;">{t}</span>'
+            for t in trends
         )
+        st.markdown(badges, unsafe_allow_html=True)
 
     # ── Step 3: RAG — retrieve inventory ──────────────────────────────────
     with col3:
@@ -362,17 +353,15 @@ if generate:
                 docs          = retriever.invoke(rag_query)
                 inventory_str = format_docs(docs)
             except Exception as e:
-                st.error(f"Pinecone error: {e}\n\nCheck your Pinecone API key and make sure you ran `python ingest.py`.")
+                st.error(f"Pinecone error: {e}")
                 st.stop()
 
+        st.markdown(f"### 🗂️ Matched Inventory ({len(docs)})")
         pills = "".join(
             f'<span style="display:inline-block;background:#f0ebe0;border:1px solid #c8a96e;border-radius:20px;padding:4px 14px;font-size:0.78rem;margin:3px;color:#5a4a35;">{d.metadata.get("prod_name","?")} · {d.metadata.get("colour_group_name","?")}</span>'
             for d in docs
         )
-        st.markdown(
-            f'<div style="background:white;border-radius:12px;padding:20px 24px;margin-bottom:16px;box-shadow:0 2px 12px rgba(0,0,0,0.07);border-left:4px solid #c8a96e;"><h4 style="margin:0 0 8px 0;">🗂️ Matched Inventory ({len(docs)})</h4>{pills}</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(pills, unsafe_allow_html=True)
 
     # ── Step 4: Groq + Langfuse — generate guide ──────────────────────────
     st.markdown("---")
@@ -386,7 +375,7 @@ if generate:
             st.error(f"Groq API error: {e}")
             st.stop()
 
-    # ── Force Langfuse flush so traces are sent before Streamlit ends ──────
+    # ── Force Langfuse flush ───────────────────────────────────────────────
     if langfuse_public and langfuse_secret:
         try:
             st.session_state["lf_client"].flush()
@@ -394,7 +383,7 @@ if generate:
             pass
 
     st.markdown(
-        f'<div class="guide-box">{guide.replace(chr(10), "<br>")}</div>',
+        f'<div style="background:#0d0d0d;color:#f5f0e8;border-radius:14px;padding:28px 32px;font-size:0.97rem;line-height:1.75;border:1px solid #c8a96e;">{guide.replace(chr(10), "<br>")}</div>',
         unsafe_allow_html=True,
     )
 
