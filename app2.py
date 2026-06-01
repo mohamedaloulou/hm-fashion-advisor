@@ -1,9 +1,9 @@
 """
-app.py  —  H&M AI Fashion Advisor
+app2.py  —  H&M AI Fashion Advisor
 Streamlit app that combines:
   - Live weather         (OpenWeatherMap API)
   - Google Trends        (pytrends)
-  - RAG over H&M inventory (LangChain + ChromaDB + HuggingFace Embeddings)
+  - RAG over H&M inventory (LangChain + Pinecone + HuggingFace Embeddings)
   - Layout guide generation (Groq API — free, CPU-friendly)
   - LLM Monitoring       (Langfuse — optional)
 """
@@ -18,13 +18,12 @@ from langfuse import Langfuse
 from langfuse.decorators import langfuse_context, observe
 
 # ── LangChain imports ──────────────────────────────────────────────────────────
-from langchain_community.vectorstores import Chroma
+from langchain_pinecone import PineconeVectorStore
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-CHROMA_PATH     = "./chroma_db"
-COLLECTION_NAME = "hm_products"
+INDEX_NAME      = "hm-products"
 TOP_K           = 8
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 GROQ_MODEL      = "llama-3.1-8b-instant"
@@ -90,17 +89,17 @@ def get_groq_client(api_key: str) -> Groq:
 
 # ── Cached resources ───────────────────────────────────────────────────────────
 @st.cache_resource
-def get_vectorstore() -> Chroma:
+def get_vectorstore(_pinecone_api_key: str) -> PineconeVectorStore:
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    return Chroma(
-        collection_name=COLLECTION_NAME,
-        persist_directory=CHROMA_PATH,
-        embedding_function=embeddings,
+    return PineconeVectorStore(
+        index_name=INDEX_NAME,
+        embedding=embeddings,
+        pinecone_api_key=_pinecone_api_key,
     )
 
 
 @st.cache_resource
-def get_retriever(_vectorstore: Chroma):
+def get_retriever(_vectorstore: PineconeVectorStore):
     return _vectorstore.as_retriever(search_kwargs={"k": TOP_K})
 
 
@@ -258,8 +257,9 @@ with st.sidebar:
     st.markdown("## ⚙️ Configuration")
     st.markdown("---")
 
-    groq_key    = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
-    weather_key = st.text_input("OpenWeatherMap API Key", type="password", placeholder="abc123...")
+    groq_key      = st.text_input("Groq API Key", type="password", placeholder="gsk_...")
+    weather_key   = st.text_input("OpenWeatherMap API Key", type="password", placeholder="abc123...")
+    pinecone_key  = st.text_input("Pinecone API Key", type="password", placeholder="pcsk_...")
 
     st.markdown("---")
     st.markdown("### 📍 Location & Profile")
@@ -285,7 +285,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption("Get a free Groq API key at console.groq.com")
-    st.caption("Make sure you ran `python ingest.py` first to populate ChromaDB.")
+    st.caption("Get a free Pinecone API key at pinecone.io")
+    st.caption("Run `python ingest.py` once locally to populate Pinecone.")
 
 
 # ── Main UI ────────────────────────────────────────────────────────────────────
@@ -296,8 +297,8 @@ st.markdown("---")
 generate = st.button("✨ Generate Layout Guide", use_container_width=True)
 
 if generate:
-    if not groq_key or not weather_key:
-        st.error("Please enter both API keys in the sidebar.")
+    if not groq_key or not weather_key or not pinecone_key:
+        st.error("Please enter Groq, OpenWeatherMap, and Pinecone API keys in the sidebar.")
         st.stop()
 
     # ── Activate Langfuse if keys provided ────────────────────────────────
@@ -349,13 +350,13 @@ if generate:
     with col3:
         with st.spinner("Searching inventory..."):
             try:
-                vectorstore   = get_vectorstore()
+                vectorstore   = get_vectorstore(pinecone_key)
                 retriever     = get_retriever(vectorstore)
                 rag_query     = f"{weather['description']} {occasion} {gender} {' '.join(trends[:3])}"
                 docs          = retriever.invoke(rag_query)
                 inventory_str = format_docs(docs)
             except Exception as e:
-                st.error(f"ChromaDB error: {e}\n\nDid you run `python ingest.py`?")
+                st.error(f"Pinecone error: {e}\n\nCheck your Pinecone API key and make sure you ran `python ingest.py`.")
                 st.stop()
 
         pills = "".join(
@@ -406,7 +407,7 @@ else:
             <p>Fill in your API keys and city in the sidebar, then hit <b>Generate Layout Guide</b>.</p>
             <br>
             <p style="font-size:0.85rem; opacity:0.6">
-                Powered by Groq (Llama 3.1) · OpenWeatherMap · Google Trends · LangChain · ChromaDB · Langfuse
+                Powered by Groq (Llama 3.1) · OpenWeatherMap · Google Trends · LangChain · Pinecone · Langfuse
             </p>
         </div>
         """,

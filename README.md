@@ -1,6 +1,8 @@
 # 🧥 H&M AI Fashion Advisor
 
-Weather-aware, trend-driven outfit and store layout guide powered by **Groq (Llama 3.1)**, **LangChain**, **ChromaDB**, **OpenWeatherMap**, **Google Trends**, and optional **Langfuse** observability.
+Weather-aware, trend-driven outfit and store layout guide powered by **Groq (Llama 3.1)**, **LangChain**, **Pinecone**, **OpenWeatherMap**, **Google Trends**, and optional **Langfuse** observability.
+
+> **Branch: `first_version`** — uses Pinecone as the hosted vector store instead of local ChromaDB, making it fully deployable to cloud platforms with no local files needed.
 
 ---
 
@@ -8,15 +10,14 @@ Weather-aware, trend-driven outfit and store layout guide powered by **Groq (Lla
 
 ```
 SA_fashion/
-├── ready_file.json        ← H&M product data (you provide this)
-├── ingest.py              ← loads JSON into ChromaDB (run once)
-├── app2.py                ← main Streamlit app (Groq + Langfuse)
-├── app.py                 ← alternative app (Google Gemini)
+├── ready_file.json        ← H&M product data
+├── ingest.py              ← embeds JSON and pushes vectors to Pinecone (run once locally)
+├── app2.py                ← main Streamlit app (Groq + Pinecone + Langfuse)
 ├── requirements.txt
 ├── test_weather.py        ← test OpenWeatherMap API key
-├── test_llm.py            ← test Gemini API key
+├── test_llm.py            ← test Groq API key
 ├── test_langfuse.py       ← test Langfuse connection
-└── chroma_db/             ← created automatically by ingest.py
+└── .env                   ← local secrets (never committed)
 ```
 
 ---
@@ -28,12 +29,17 @@ User input (city, occasion, gender)
         │
         ├─► OpenWeatherMap API  →  live weather data
         ├─► Google Trends       →  trending fashion keywords
-        ├─► ChromaDB (RAG)      →  relevant H&M products retrieved via semantic search
+        ├─► Pinecone (RAG)      →  relevant H&M products retrieved via semantic search
         │
         └─► Groq (Llama 3.1)   →  generates store layout & outfit guide
                 │
                 └─► Langfuse   →  traces prompt, response, tokens (optional)
 ```
+
+**Why Pinecone instead of ChromaDB:**
+- No local `chroma_db/` folder needed on the server
+- Vectors are stored permanently in the cloud — ingest once, deploy anywhere
+- Build command on Render is just `pip install -r requirements.txt`
 
 ---
 
@@ -52,28 +58,33 @@ conda activate fashion-langchain
 pip install -r requirements.txt
 ```
 
-### 3. Place your data file
+### 3. Set up your `.env` file
 
-Make sure `ready_file.json` is in the project folder. Expected format:
+Create a `.env` file in the project root:
 
-```json
-[
-  {
-    "text": "Product: Strap top. Type: ...",
-    "metadata": { "prod_name": "Strap top", "product_type_name": "Top", "colour_group_name": "Black", "garment_group_name": "Jersey Basic" }
-  }
-]
+```env
+PINECONE_API_KEY=your_pinecone_api_key_here
 ```
 
-### 4. Ingest data into ChromaDB (run once)
+### 4. Create a Pinecone index
+
+1. Sign up free at [pinecone.io](https://www.pinecone.io)
+2. Create an index with these settings:
+   - **Name:** `hm-products`
+   - **Dimensions:** `384`
+   - **Metric:** `cosine`
+   - **Cloud/Region:** `AWS / us-east-1`
+3. Copy your API key from the dashboard
+
+### 5. Ingest data into Pinecone (run once locally)
 
 ```bash
 python ingest.py
 ```
 
-This creates the `chroma_db/` folder. Re-run only if your product data changes.
+This reads `ready_file.json`, embeds all products using `all-MiniLM-L6-v2`, and pushes them to your Pinecone index in batches. Re-run only if your product data changes.
 
-### 5. Launch the app
+### 6. Launch the app
 
 ```bash
 streamlit run app2.py
@@ -89,6 +100,7 @@ Enter all keys in the app sidebar. They are never stored to disk.
 |-----|----------------|----------|
 | **Groq API Key** | [console.groq.com](https://console.groq.com) — free tier | ✅ Yes |
 | **OpenWeatherMap Key** | [openweathermap.org/api](https://openweathermap.org/api) — free tier (1000 calls/day) | ✅ Yes |
+| **Pinecone API Key** | [pinecone.io](https://www.pinecone.io) — free tier (2GB, 1 index) | ✅ Yes |
 | **Langfuse Public Key** | [cloud.langfuse.com](https://cloud.langfuse.com) — free tier | ⬜ Optional |
 | **Langfuse Secret Key** | Same project as Public Key | ⬜ Optional |
 
@@ -128,7 +140,7 @@ Test each API independently before running the full app:
 # Test OpenWeatherMap key
 python test_weather.py
 
-# Test Groq / Gemini LLM key
+# Test Groq API key
 python test_llm.py
 
 # Test Langfuse connection and trace delivery
@@ -139,17 +151,24 @@ python test_langfuse.py
 
 ## 🌐 Deploy for Free
 
-### Hugging Face Spaces (recommended)
-1. Create a Space at [huggingface.co/spaces](https://huggingface.co/spaces), choose **Streamlit** SDK
-2. Upload all files including the `chroma_db/` folder
-3. Add your API keys as **Secrets** in Space settings
-
-### Render
-1. Push to GitHub
+### Render (recommended for this branch)
+1. Push this branch to GitHub
 2. New Web Service on [render.com](https://render.com)
-3. Build command: `pip install -r requirements.txt && python ingest.py`
+3. Build command: `pip install -r requirements.txt`
 4. Start command: `streamlit run app2.py --server.port $PORT --server.address 0.0.0.0`
-5. Add env vars for your API keys
+5. Add these environment variables in Render dashboard:
+   - `GROQ_API_KEY`
+   - `OPENWEATHERMAP_API_KEY`
+   - `PINECONE_API_KEY`
+   - `LANGFUSE_PUBLIC_KEY` *(optional)*
+   - `LANGFUSE_SECRET_KEY` *(optional)*
+
+> No `python ingest.py` in the build command — vectors already live in Pinecone from your local run.
+
+### Hugging Face Spaces
+1. Create a Space at [huggingface.co/spaces](https://huggingface.co/spaces), choose **Streamlit** SDK
+2. Push this branch
+3. Add your API keys as **Secrets** in Space settings
 
 ---
 
@@ -159,7 +178,8 @@ python test_langfuse.py
 |-----------|---------|
 | UI | Streamlit |
 | LLM | Groq API — Llama 3.1 8B Instant |
-| RAG / Vector store | LangChain + ChromaDB |
+| RAG | LangChain |
+| Vector store | Pinecone (hosted, free tier) |
 | Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) |
 | Weather | OpenWeatherMap API |
 | Trends | pytrends (Google Trends) |

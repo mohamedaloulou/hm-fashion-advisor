@@ -1,42 +1,39 @@
 """
 ingest.py  —  One-time ingestion script
-Reads read_file.json → builds LangChain Documents → stores in ChromaDB.
+Reads ready_file.json → builds LangChain Documents → stores in Pinecone.
 
-Run once before starting the Streamlit app:
+Run once locally before deploying:
     python ingest.py
+
+Requirements:
+    PINECONE_API_KEY must be set in your .env file or environment.
 """
 
 import json
+import os
+import time
 from pathlib import Path
+from dotenv import load_dotenv
 
-from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_core.documents import Document
+from langchain_pinecone import PineconeVectorStore
+from pinecone import Pinecone, ServerlessSpec
 
-# ── Config (must match app.py) ─────────────────────────────────────────────────
+load_dotenv()
+
+# ── Config ─────────────────────────────────────────────────────────────────────
 JSON_PATH       = "./ready_file.json"
-CHROMA_PATH     = "./chroma_db"
-COLLECTION_NAME = "hm_products"
+INDEX_NAME      = "hm-products"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
-BATCH_SIZE      = 500   # tune down if you hit memory limits
+DIMENSION       = 384        # all-MiniLM-L6-v2 output size
+METRIC          = "cosine"
+BATCH_SIZE      = 100        # Pinecone free tier: keep batches small
+PINECONE_CLOUD  = "aws"
+PINECONE_REGION = "us-east-1"
 
 
 def load_documents(json_path: str) -> list[Document]:
-    """
-    Convert each row in read_file.json into a LangChain Document.
-
-    Your JSON structure:
-      [
-        {
-          "text": "Product: Strap top. Type: ...",   ← becomes page_content
-          "metadata": { "prod_name": ..., ... }       ← becomes metadata
-        },
-        ...
-      ]
-
-    LangChain Document = page_content (str) + metadata (dict).
-    This is the native unit for every LangChain vectorstore operation.
-    """
     raw = json.loads(Path(json_path).read_text(encoding="utf-8"))
     docs = []
     for row in raw:
@@ -50,40 +47,49 @@ def load_documents(json_path: str) -> list[Document]:
     return docs
 
 
+def create_index_if_not_exists(pc: Pinecone) -> None:
+    existing = [idx.name for idx in pc.list_indexes()]
+    if INDEX_NAME in existing:
+        print(f"✅ Index '{INDEX_NAME}' already exists — skipping creation.")
+        return
+
+    print(f"⏳ Creating Pinecone index '{INDEX_NAME}'...")
+    pc.create_index(
+        name=INDEX_NAME,
+        dimension=DIMENSION,
+        metric=METRIC,
+        spec=ServerlessSpec(cloud=PINECONE_CLOUD, region=PINECONE_REGION),
+    )
+    # Wait for index to be ready
+    while not pc.describe_index(INDEX_NAME).status["ready"]:
+        print("   Waiting for index to be ready...")
+        time.sleep(2)
+    print(f"✅ Index '{INDEX_NAME}' is ready.")
+
+
 def ingest(docs: list[Document]) -> None:
-    """
-    Embed and store documents in ChromaDB via LangChain.
+    api_key = os.environ.get("PINECONE_API_KEY")
+    if not api_key:
+        raise ValueError("PINECONE_API_KEY not found. Add it to your .env file.")
 
-    LangChain handles:
-      - Calling the embedding model in batches
-      - Creating / opening the ChromaDB collection
-      - Persisting to disk at CHROMA_PATH
+    pc = Pinecone(api_key=api_key)
+    create_index_if_not_exists(pc)
 
-    Equivalent of the old manual chromadb.PersistentClient().get_or_create_collection()
-    + collection.add(documents=..., embeddings=..., metadatas=...) workflow.
-    """
     print(f"⏳ Loading embedding model: {EMBEDDING_MODEL}")
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
-    print(f"⏳ Ingesting into ChromaDB at {CHROMA_PATH} ...")
-
-    # Process in batches to avoid OOM on large datasets
+    print(f"⏳ Ingesting {len(docs)} documents into Pinecone in batches of {BATCH_SIZE}...")
     for i in range(0, len(docs), BATCH_SIZE):
-        batch = docs[i : i + BATCH_SIZE]
-        if i == 0:
-            # First batch: create the collection
-            vectorstore = Chroma.from_documents(
-                documents=batch,
-                embedding=embeddings,
-                collection_name=COLLECTION_NAME,
-                persist_directory=CHROMA_PATH,
-            )
-        else:
-            # Subsequent batches: add to existing collection
-            vectorstore.add_documents(batch)
+        batch = docs[i: i + BATCH_SIZE]
+        PineconeVectorStore.from_documents(
+            documents=batch,
+            embedding=embeddings,
+            index_name=INDEX_NAME,
+            pinecone_api_key=api_key,
+        )
         print(f"   → Ingested {min(i + BATCH_SIZE, len(docs))} / {len(docs)}")
 
-    print(f"✅ Done! Collection '{COLLECTION_NAME}' ready in {CHROMA_PATH}")
+    print(f"✅ Done! {len(docs)} documents stored in Pinecone index '{INDEX_NAME}'.")
 
 
 if __name__ == "__main__":

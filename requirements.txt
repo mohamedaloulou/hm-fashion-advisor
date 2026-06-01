@@ -13,10 +13,14 @@ sentence-transformers>=3.0.0
 huggingface-hub>=0.23.0
 
 # Vector store
-chromadb>=0.5.0
+pinecone-client>=3.0.0
+langchain-pinecone>=0.2.0
 
 # LLM
 groq>=1.4.0
 
 # Observability
 langfuse>=2.30.0,<3.0.0
+
+# Utilities
+python-dotenv>=1.0.0
