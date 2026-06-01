@@ -130,6 +130,7 @@ def fetch_weather(city: str, api_key: str) -> dict | None:
         )
         resp.raise_for_status()
         data = resp.json()
+        st.write(data)  # temporary debug — remove after checking
         return {
             "city":        data["name"],
             "temp_c":      round(data["main"]["temp"], 1),
